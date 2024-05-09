@@ -73,7 +73,7 @@ def prepare_vision_prompt(dataset):
         3. {choices[2]}
         4. {choices[3]}
 
-        Your answer should be a number between 1 and 4.
+        ONLY return a number from 1 to 4. DO NOT write the answer.
         """
         id = row["id"].split("/")[-1]
         image = f"images/{id}.png"
@@ -98,9 +98,10 @@ def parse_answer(response):
 
 
 def check_correctness(response, true_label):
+    response = parse_answer(response)
 
     # if response == true_label:
-    return response == true_label
+    return response == (true_label + 1)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -123,16 +124,23 @@ if __name__ == '__main__':
 
     from datasets import load_dataset
 
-    dataset = load_dataset("shangzhu/scibench", split = "train")
     """
     Dataset({
     features: ['image', 'question', 'choices', 'label', 'description', 'id'],
     num_rows: 1198
     })
     """
-    
+    dataset = load_dataset("shangzhu/scibench", split = "valid")
+    # change the ids of dataset to have only what comes after the last '/'
+    dataset = dataset.map(lambda x: {"id": x["id"].split("/")[-1], "question": x["question"], "choices": x["choices"], "label": x["label"], "description": x["description"]})
+
+    results = pd.read_json("chemistry_benchmark/gemini_results.json")
+    dataset = dataset.filter(lambda x: x["id"] in results["question_id"].values)        
+
 
     prompts = prepare_vision_prompt(dataset)
+
+
     
     df_prompts = pd.DataFrame(prompts)
 
@@ -145,7 +153,24 @@ if __name__ == '__main__':
         image_path = row["image_path"]
         true_label = row["true_label"]
 
+        if args.resume:
 
+            if row["id"] in df_resume["question_id"].values:
+                df_resume_row = df_resume[df_resume["question_id"] == row["id"]].iloc[0]
+
+                df_results = df_results.append({
+                    "question_id": df_resume_row["question_id"],
+                    "response": {
+                        "vision": df_resume_row["response"]["vision"]
+                    },
+                    "correct": {
+                        "vision": check_correctness(df_resume_row["response"]["vision"], true_label)
+                    },
+                    "true_label": true_label
+                }, ignore_index=True)
+                    
+                continue
+                    
         if args.model in ['gemini', 'gpt4', 'llava', 'claude3']:
             vision_response = call_vision(prompt, image_path, args.model)
         else:
@@ -164,8 +189,15 @@ if __name__ == '__main__':
 
         df_results.to_json(result_path, orient="records", indent=4)
 
-    # df_results.to_json(result_path, orient="records", indent=4)
-    # print(f"Results saved to {result_path}")
+    
+    # get final score
+    print(df_results["correct"])
+    vision_accuracy = [x["vision"] for x in df_results["correct"]].count(True) / len(df_results)
+
+    # save in results dir
+    with open(f"{result_dir}/{args.model}_accuracy.txt", "w") as f:
+        f.write(f"Vision Accuracy: {vision_accuracy}")
+
 
     
     
