@@ -142,21 +142,6 @@ if __name__ == '__main__':
         image_path = row["image_path"]
         true_label = row["true_label"]
 
-        # if args.resume:
-        #     if chess_id in df_resume["chess_id"].values:
-        #         df_resume_row = df_resume[df_resume["chess_id"] == chess_id].iloc[0]
-        #         df_results = df_results.append({
-        #             "chess_id": df_resume_row['chess_id'],
-        #             "response": df_resume_row['response'],
-        #             "correct": {
-        #                 "vision": check_correctness(df_resume_row['response']['vision'], df_resume_row['true_label']),
-        #                 "anl": check_correctness(df_resume_row['response']['anl'], df_resume_row['true_label']),
-        #                 "pgn": check_correctness(df_resume_row['response']['pgn'], df_resume_row['true_label']),
-        #                 "fen": check_correctness(df_resume_row['response']['fen'], df_resume_row['true_label'])
-        #             },
-        #             "true_label": df_resume_row['true_label']
-        #         }, ignore_index=True)
-        #         continue
 
         if args.model in ['gemini', 'gpt4', 'llava', 'claude3']:
             vision_response = call_vision(prompt, image_path, args.model)
@@ -179,19 +164,5 @@ if __name__ == '__main__':
     # df_results.to_json(result_path, orient="records", indent=4)
     # print(f"Results saved to {result_path}")
 
-    # if not args.only_fen:
-    #     scores = {
-    #         "vision": df_results['correct'].apply(lambda x: x['vision']).mean(),
-    #         "anl": df_results['correct'].apply(lambda x: x['anl']).mean(),
-    #         "pgn": df_results['correct'].apply(lambda x: x['pgn']).mean()
-    #     }
-    # else:
-    #     scores = {
-    #         "fen": df_results['correct'].apply(lambda x: x['fen']).mean()
-    #     }
     
-    # if args.only_fen:
-    #     json.dump(scores, open(f"{result_dir}/{args.model}_scores_fen.json", "w"), indent=4)
-    # else:
-    #     json.dump(scores, open(f"{result_dir}/{args.model}_scores.json", "w"), indent=4)
     
