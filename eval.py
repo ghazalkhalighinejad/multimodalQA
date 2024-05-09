@@ -25,8 +25,6 @@ from api.claude3 import (
 from api.together_api import call_together
 
 
-from api.reka import call_reka
-
 def call_vision(text_query, image_path, model):
     if model == "gemini":
         response = call_gemini_pro_vision(text_query, image_path)
@@ -51,8 +49,6 @@ def call_text(text_query, system_content, model):
         response = call_gpt3_5(text_query, system_content)
     elif model == "claude3":
         response = call_claude3(text_query, system_content)
-    elif "reka" in model: #reka-edge and reka-flash
-        response = call_reka(text_query, model_name=model)
     elif ("llama" in args.model or args.model == "mixtral") and args.together:
         response = call_together(text_query, system_content, model=args.model)
     else:
@@ -60,16 +56,36 @@ def call_text(text_query, system_content, model):
     return response
 
 
-def prepare_vision_prompt(#TODO):
+def prepare_vision_prompt(dataset):
 
-    image_path = #TODO
-    
-    text_query = #TODO
+    prompts = []
 
-    return {
-        "image_path": image_path,
-        "text_query": text_query
-    }
+    for row in dataset:
+        
+        id, question, choices, label, description = row["id"], row["question"], row["choices"], row["label"], row["description"]
+
+        prompt = f"""Given the image of a chemical compound, answer the following multiple choice question.
+
+        Question: {question}
+        Choices: 
+        1. {choices[0]}
+        2. {choices[1]}
+        3. {choices[2]}
+        4. {choices[3]}
+
+        Your answer should be a number between 1 and 4.
+        """
+        id = row["id"].split("/")[-1]
+        image = f"images/{id}.png"
+
+        prompts.append({
+            "id": id,
+            "text_query": prompt,
+            "image_path": image,
+            "true_label": label
+        })
+
+    return prompts
 
 
 def parse_answer(response):
@@ -93,145 +109,89 @@ if __name__ == '__main__':
     if args.model == "llava":
         from api.llava import call_llava
    
-    result_dir = "chess_benchmark"
+    result_dir = "chemistry_benchmark"
 
     if not os.path.exists(result_dir):
         os.makedirs(result_dir)
     
-    if args.only_fen:
-        result_path = f"{result_dir}/{args.model}_results_fen.json"
-    else:
-        result_path = f"{result_dir}/{args.model}_results.json"
+    result_path = f"{result_dir}/{args.model}_results.json"
     if args.resume:
         df_resume = pd.read_json(result_path)
+
+    from datasets import load_dataset
+
+    dataset = load_dataset("shangzhu/scibench", split = "train")
+    """
+    Dataset({
+    features: ['image', 'question', 'choices', 'label', 'description', 'id'],
+    num_rows: 1198
+    })
+    """
+    
+
+    prompts = prepare_vision_prompt(dataset)
     
     df_prompts = pd.DataFrame(prompts)
 
-    df_results = pd.DataFrame(columns=["chess_id", "response", "correct", 'true_label'])
-    eval_bar = tqdm(df_prompts.iterrows(), total=len(df_prompts))
-
-    gemini_results = pd.read_json("chess_benchmark/gemini_results.json")
-
-    # load sampled_games.csv
-    sampled_games = pd.read_csv("../sampled_1000.csv")       
+    df_results = pd.DataFrame(columns=["id", "response", "correct", 'true_label'])
+    eval_bar = tqdm(df_prompts.iterrows(), total=len(df_prompts)) 
 
     for _, row in eval_bar:
 
-        if args.only_fen:
-            fen_prompt = get_fen_prompt(row["id"])
-            chess_id = row["id"]
-            true_label = sampled_games[sampled_games['Site'] == chess_id]['Result'].values[0]
+        prompt = row["text_query"]
+        image_path = row["image_path"]
+        true_label = row["true_label"]
 
-            if chess_id not in gemini_results["chess_id"].values:
-                continue
-        
-            if args.model in ['gemini', 'gpt4', 'palm2', 'gpt3.5', 'claude3', 'reka-flash', 'reka-edge', 'llama2_7b', 'llama2_13b']:
-                fen_response = call_text(fen_prompt['text_query'], system_content="You are a helpful chess player.", model=args.model)
-            elif ("llama" in args.model or args.model == "mixtral") and args.together:
-                fen_response = call_together(fen_prompt['text_query'], system_content="You are a helpful chess player.", model=args.model)
-            else:
-                fen_response = ""
+        # if args.resume:
+        #     if chess_id in df_resume["chess_id"].values:
+        #         df_resume_row = df_resume[df_resume["chess_id"] == chess_id].iloc[0]
+        #         df_results = df_results.append({
+        #             "chess_id": df_resume_row['chess_id'],
+        #             "response": df_resume_row['response'],
+        #             "correct": {
+        #                 "vision": check_correctness(df_resume_row['response']['vision'], df_resume_row['true_label']),
+        #                 "anl": check_correctness(df_resume_row['response']['anl'], df_resume_row['true_label']),
+        #                 "pgn": check_correctness(df_resume_row['response']['pgn'], df_resume_row['true_label']),
+        #                 "fen": check_correctness(df_resume_row['response']['fen'], df_resume_row['true_label'])
+        #             },
+        #             "true_label": df_resume_row['true_label']
+        #         }, ignore_index=True)
+        #         continue
 
-            df_results = df_results.append({
-                "chess_id": chess_id,
-                "response": {
-                    "fen": fen_response
-                },
-                "correct": {
-                    "fen": check_correctness(fen_response, true_label)
-                },
-                "true_label": true_label
-            }, ignore_index=True)
-
-            df_results.to_json(result_path, orient="records", indent=4)
-            eval_bar.set_description(f"Chess {chess_id} | FEN: {df_results['correct'].apply(lambda x: x['fen']).mean()*100:.2f}%")
-
+        if args.model in ['gemini', 'gpt4', 'llava', 'claude3']:
+            vision_response = call_vision(prompt, image_path, args.model)
         else:
+            vision_response = ""
 
-            if args.isoscratch:
-                graphical_prompt = prepare_vision_prompt(row["id"], sampled_games)
-            else:
-                graphical_prompt = row["graphical_prompt"]
-            anl_prompt = row["anl_prompt"]
-            pgn_prompt = row["pgn_prompt"]
-            chess_id = row["id"]
-            image_path = graphical_prompt["image_path"]
+        df_results = df_results.append({
+            "question_id": row["id"],
+            "response": {
+                "vision": vision_response
+            },
+            "correct": {
+                "vision": check_correctness(vision_response, true_label),
+            },
+            "true_label": true_label
+        }, ignore_index=True)
 
-            true_label = sampled_games[sampled_games['Site'] == chess_id]['Result'].values[0]
+        df_results.to_json(result_path, orient="records", indent=4)
 
-            if args.resume:
-                if chess_id in df_resume["chess_id"].values:
-                    df_resume_row = df_resume[df_resume["chess_id"] == chess_id].iloc[0]
-                    df_results = df_results.append({
-                        "chess_id": df_resume_row['chess_id'],
-                        "response": df_resume_row['response'],
-                        "correct": {
-                            "vision": check_correctness(df_resume_row['response']['vision'], df_resume_row['true_label']),
-                            "anl": check_correctness(df_resume_row['response']['anl'], df_resume_row['true_label']),
-                            "pgn": check_correctness(df_resume_row['response']['pgn'], df_resume_row['true_label']),
-                            "fen": check_correctness(df_resume_row['response']['fen'], df_resume_row['true_label'])
-                        },
-                        "true_label": df_resume_row['true_label']
-                    }, ignore_index=True)
-                    continue
-            if chess_id not in gemini_results["chess_id"].values:
-                continue
+    # df_results.to_json(result_path, orient="records", indent=4)
+    # print(f"Results saved to {result_path}")
 
-            if args.model in ['gemini', 'gpt4', 'llava', 'claude3']:
-                vision_response = call_vision(graphical_prompt['text_query'], graphical_prompt["image_path"], args.model)
-            else:
-                vision_response = ""
-            
-            if not args.isoscratch:
-                if args.model in ['gemini', 'gpt4', 'palm2', 'gpt3.5', 'claude3', 'reka-flash', 'reka-edge', 'llama2_7b', 'llama2_13b']:
-                    anl_response = call_text(anl_prompt['text_query'], system_content="You are a helpful chess player.", model=args.model)
-                    pgn_response = call_text(pgn_prompt['text_query'], system_content="You are a helpful chess player.", model=args.model)
-                elif ("llama" in args.model or args.model == "mixtral") and args.together:
-                    anl_response = call_together(anl_prompt['text_query'], system_content="You are a helpful chess player.", model=args.model)
-                    pgn_response = call_together(pgn_prompt['text_query'], system_content="You are a helpful chess player.", model=args.model)
-                else:
-                    anl_response = ""
-                    pgn_response = ""
-            else:
-                anl_response = ""
-                pgn_response = ""
-
-            
-
-            df_results = df_results.append({
-                "chess_id": chess_id,
-                "response": {
-                    "vision": vision_response,
-                    "anl": anl_response,
-                    "pgn": pgn_response
-                },
-                "correct": {
-                    "vision": check_correctness(vision_response, true_label),
-                    "anl": check_correctness(anl_response, true_label),
-                    "pgn": check_correctness(pgn_response, true_label)
-                },
-                "true_label": true_label
-            }, ignore_index=True)
-
-            df_results.to_json(result_path, orient="records", indent=4)
-            eval_bar.set_description(f"Chess {chess_id} | Vision: {df_results['correct'].apply(lambda x: x['vision']).mean()*100:.2f}% | ANL: {df_results['correct'].apply(lambda x: x['anl']).mean()*100:.2f}% | PGN: {df_results['correct'].apply(lambda x: x['pgn']).mean()*100:.2f}%")
-
-    df_results.to_json(result_path, orient="records", indent=4)
-    print(f"Results saved to {result_path}")
-
-    if not args.only_fen:
-        scores = {
-            "vision": df_results['correct'].apply(lambda x: x['vision']).mean(),
-            "anl": df_results['correct'].apply(lambda x: x['anl']).mean(),
-            "pgn": df_results['correct'].apply(lambda x: x['pgn']).mean()
-        }
-    else:
-        scores = {
-            "fen": df_results['correct'].apply(lambda x: x['fen']).mean()
-        }
+    # if not args.only_fen:
+    #     scores = {
+    #         "vision": df_results['correct'].apply(lambda x: x['vision']).mean(),
+    #         "anl": df_results['correct'].apply(lambda x: x['anl']).mean(),
+    #         "pgn": df_results['correct'].apply(lambda x: x['pgn']).mean()
+    #     }
+    # else:
+    #     scores = {
+    #         "fen": df_results['correct'].apply(lambda x: x['fen']).mean()
+    #     }
     
-    if args.only_fen:
-        json.dump(scores, open(f"{result_dir}/{args.model}_scores_fen.json", "w"), indent=4)
-    else:
-        json.dump(scores, open(f"{result_dir}/{args.model}_scores.json", "w"), indent=4)
+    # if args.only_fen:
+    #     json.dump(scores, open(f"{result_dir}/{args.model}_scores_fen.json", "w"), indent=4)
+    # else:
+    #     json.dump(scores, open(f"{result_dir}/{args.model}_scores.json", "w"), indent=4)
     
