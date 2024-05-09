@@ -99,9 +99,4 @@ def call_palm_2(text_query, temperature=0.0):
     sleep(1)
     return response.result
 
-if __name__ == '__main__':
-    text_query = "are the two highlighed red nodes connected?"
-    image_path = "graph/0_1_0_yes.png"
-    response = call_gemini_pro_vision(text_query, image_path)
-    pdb.set_trace()
     

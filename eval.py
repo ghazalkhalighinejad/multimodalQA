@@ -89,15 +89,18 @@ def prepare_vision_prompt(dataset):
 
 
 def parse_answer(response):
-    # TODO
+
+    response = ''.join(filter(str.isdigit, response))
+    response = int(response)
+
     return response
 
 
 
 def check_correctness(response, true_label):
 
-    # TODO
-    return 0.5
+    # if response == true_label:
+    return response == true_label
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
